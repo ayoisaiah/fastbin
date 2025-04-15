@@ -57,58 +57,102 @@ type Binary struct {
 
 type Executables []*tar.Header
 
-func (f *File) FindExecutable() (Executables, error) {
-	var executables Executables
+// newCompressedReader returns an appropriate reader based on the file extension
+func newCompressedReader(file *os.File, fileExt string) (io.Reader, error) {
+	switch fileExt {
+	case ".gz":
+		return gzip.NewReader(file)
+	case ".bzip2":
+		return bzip2.NewReader(file), nil
+	case ".xz":
+		return xz.NewReader(file)
+	default:
+		return nil, fmt.Errorf("unsupported compression format: %s", fileExt)
+	}
+}
 
+// isPotentialBinary checks if a file could be a binary based on its name and type
+func isPotentialBinary(hdr *tar.Header) bool {
+	return hdr.Typeflag != tar.TypeDir && filepath.Ext(hdr.Name) == ""
+}
+
+func (f *File) SetType() error {
+	ext := filepath.Ext(f.Location)
+
+	fi, err := os.Stat(f.Location)
+	if err != nil {
+		return err
+	}
+
+	f.Type = ArchiveFile
+	if ext == "" {
+		f.Type = BinaryFile
+		f.Binaries = []Binary{
+			{
+				Name:     f.Name,
+				Location: f.Location,
+			},
+		}
+
+		err := os.Chmod(f.Location, fi.Mode()|0100)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (f *File) IsBinary() bool {
+	return f.Type == BinaryFile
+}
+
+func (f *File) FindExecutable() (Executables, error) {
 	file, err := os.Open(f.Location)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
 
 	defer file.Close()
 
 	fileExt := filepath.Ext(f.Location)
 
-	var r io.Reader
-
-	switch fileExt {
-	case ".gz":
-		r, err = gzip.NewReader(file)
-	case ".bzip2":
-		r = bzip2.NewReader(file)
-	case ".xz":
-		r, err = xz.NewReader(file)
-	}
-
+	r, err := newCompressedReader(file, fileExt)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create compressed reader: %w", err)
 	}
 
-	tr := tar.NewReader(r)
+	f.Reader = tar.NewReader(r)
 
-	f.Reader = tr
+	executables, files, err := f.findBinaries(f.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find binaries: %w", err)
+	}
 
+	if len(executables) == 0 {
+		return prompt(files)
+	}
+
+	return executables, nil
+}
+
+func (f *File) findBinaries(
+	tr *tar.Reader,
+) (Executables, map[string]*tar.Header, error) {
+	var executables Executables
 	files := make(map[string]*tar.Header)
 
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
-			if len(executables) == 0 {
-				return prompt(files)
-			}
-
 			break
 		}
 
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
-		if hdr.Typeflag == tar.TypeDir {
-			continue
-		}
-
-		if filepath.Ext(hdr.Name) != "" {
+		if !isPotentialBinary(hdr) {
 			continue
 		}
 
@@ -119,7 +163,14 @@ func (f *File) FindExecutable() (Executables, error) {
 		}
 	}
 
-	return executables, nil
+	return executables, files, nil
+}
+
+// makeExecutable ensures the file has execute permissions while preserving other permissions
+func makeExecutable(path string, mode os.FileMode) error {
+	// Add execute permission for user (owner)
+	executableMode := mode | 0100
+	return os.Chmod(path, executableMode)
 }
 
 func (f *File) Extract(execs Executables) error {
@@ -167,9 +218,10 @@ func (f *File) Extract(execs Executables) error {
 			return fmt.Errorf("failed to copy file: %w", err)
 		}
 
-		err = os.Chmod(outFile.Name(), os.FileMode(hdr.Mode))
-		if err != nil {
-			return fmt.Errorf("os.Chomd failed: %w", err)
+		// Convert tar header mode to os.FileMode and ensure it's executable
+		mode := os.FileMode(hdr.Mode)
+		if err := makeExecutable(outFile.Name(), mode); err != nil {
+			return fmt.Errorf("failed to make file executable: %w", err)
 		}
 
 		hash, err := getHash(outFile)

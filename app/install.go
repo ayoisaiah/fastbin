@@ -74,18 +74,20 @@ func installAction(_ context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	binaries, err := f.FindExecutable()
-	if err != nil {
-		return err
-	}
+	if !f.IsBinary() {
+		binaries, err := f.FindExecutable()
+		if err != nil {
+			return err
+		}
 
-	if len(binaries) <= 0 {
-		return errors.New("no binaries found in archive")
-	}
+		if len(binaries) <= 0 {
+			return errors.New("no binaries found in archive")
+		}
 
-	err = f.Extract(binaries)
-	if err != nil {
-		return err
+		err = f.Extract(binaries)
+		if err != nil {
+			return err
+		}
 	}
 
 	for _, v := range f.Binaries {

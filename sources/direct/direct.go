@@ -45,8 +45,15 @@ func (d *Direct) Download(url string) (*file.File, error) {
 		return nil, err
 	}
 
-	return &file.File{
+	f := &file.File{
 		Name:     baseName,
 		Location: tempFile,
-	}, nil
+	}
+
+	err = f.SetType()
+	if err != nil {
+		return nil, err
+	}
+
+	return f, nil
 }
