@@ -14,5 +14,6 @@ type Source interface {
 }
 
 func New(url string) Source {
+	// TODO: Selecting the correct source
 	return &direct.Direct{}
 }

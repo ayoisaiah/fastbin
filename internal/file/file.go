@@ -8,11 +8,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 
 	"github.com/ayoisaiah/fastbin/internal/apperr"
+	"github.com/ayoisaiah/fastbin/internal/config"
 	"github.com/charmbracelet/huh"
 	"github.com/ulikunitz/xz"
 )
@@ -27,19 +27,6 @@ const (
 	BinaryFile Type = iota
 	ArchiveFile
 )
-
-var TempDir string
-
-func init() {
-	tempDir := os.TempDir()
-
-	err := os.MkdirAll(filepath.Join(tempDir, "fastbin"), os.ModePerm)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	TempDir = filepath.Join(os.TempDir(), "fastbin")
-}
 
 type File struct {
 	Name     string
@@ -186,7 +173,7 @@ func (f *File) Extract(execs Executables) error {
 		form := huh.NewForm(
 			huh.NewGroup(
 				huh.NewMultiSelect[*tar.Header]().
-					Title("Which binaries to install?").
+					Title("Multiple executables found in the archive. What would you like to install?").
 					Options(options...).
 					Value(&e),
 			),
@@ -202,7 +189,7 @@ func (f *File) Extract(execs Executables) error {
 	}
 
 	for _, hdr := range e {
-		tempFile := filepath.Join(TempDir, hdr.Name)
+		tempFile := filepath.Join(config.TempDir(), hdr.Name)
 
 		err := os.MkdirAll(filepath.Dir(tempFile), os.ModePerm)
 		if err != nil {
@@ -235,7 +222,10 @@ func (f *File) Extract(execs Executables) error {
 			Hash:     hash,
 		})
 
-		_ = outFile.Close()
+		err = outFile.Close()
+		if err != nil {
+			return fmt.Errorf("closing file failed: %w", err)
+		}
 	}
 
 	return nil

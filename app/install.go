@@ -20,7 +20,7 @@ var installCmd = &cli.Command{
 	Action:      installAction,
 }
 
-func Move(source, destination string) error {
+func moveToBinDir(source, destination string) error {
 	err := os.Rename(source, destination)
 	if err != nil {
 		return moveCrossDevice(source, destination)
@@ -35,41 +35,41 @@ func moveCrossDevice(source, destination string) error {
 		return err
 	}
 
+	defer src.Close()
+
 	dst, err := os.Create(destination)
 	if err != nil {
-		src.Close()
 		return err
 	}
 
+	defer dst.Close()
+
 	_, err = io.Copy(dst, src)
-	src.Close()
-	dst.Close()
 	if err != nil {
 		return err
 	}
+
 	fi, err := os.Stat(source)
 	if err != nil {
-		os.Remove(destination)
 		return err
 	}
 
 	err = os.Chmod(destination, fi.Mode())
 	if err != nil {
-		os.Remove(destination)
 		return err
 	}
 
-	os.Remove(source)
-
-	return nil
+	return os.Remove(source)
 }
 
 func installAction(_ context.Context, cmd *cli.Command) error {
 	args := cmd.Args()
 
-	source := sources.New(args.Get(0))
+	url := args.Get(0)
 
-	f, err := source.Download(args.Get(0))
+	source := sources.New(url)
+
+	f, err := source.Download(url)
 	if err != nil {
 		return err
 	}
@@ -90,8 +90,10 @@ func installAction(_ context.Context, cmd *cli.Command) error {
 		}
 	}
 
+	os.Exit(1)
+
 	for _, v := range f.Binaries {
-		err := Move(
+		err := moveToBinDir(
 			v.Location,
 			filepath.Join(xdg.BinHome, filepath.Base(v.Name)),
 		)
